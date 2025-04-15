@@ -26,7 +26,8 @@ class CountRegressionDataset(Dataset):
     def __init__(self, image_dir, annotation_file, transform=None):
         self.image_dir = image_dir
         self.count_dict = load_count_annotations(annotation_file)
-        self.image_names = sorted(self.count_dict.keys())
+        # Only include images with count ≤ 1000
+        self.image_names = sorted([img for img in self.count_dict if self.count_dict[img] <= 1000])
         self.transform = transform
 
     def __len__(self):
@@ -43,7 +44,7 @@ class CountRegressionDataset(Dataset):
             image = self.transform(image)
 
         # Normalized count (divide by max approx. value)
-        count = self.count_dict[img_name] / 2000.0
+        count = self.count_dict[img_name] 
         count = torch.tensor([count], dtype=torch.float32)
 
         return image, count
@@ -54,13 +55,13 @@ class CountCNN(nn.Module):
     def __init__(self):
         super(CountCNN, self).__init__()
         self.model = nn.Sequential(
-            nn.Conv2d(3, 16, 3, padding=1), nn.ReLU(),
-            nn.MaxPool2d(2),  # 64 -> 32
-            nn.Conv2d(16, 32, 3, padding=1), nn.ReLU(),
-            nn.MaxPool2d(2),  # 32 -> 16
+            nn.Conv2d(3, 32, 3, padding=1), nn.BatchNorm2d(32), nn.ReLU(),
+            nn.MaxPool2d(2),
+            nn.Conv2d(32, 64, 3, padding=1), nn.BatchNorm2d(64), nn.ReLU(),
+            nn.MaxPool2d(2),
+            nn.Conv2d(64, 128, 3, padding=1), nn.BatchNorm2d(128), nn.ReLU(),
+            nn.AdaptiveAvgPool2d((1, 1)),
             nn.Flatten(),
-            nn.Linear(32 * 16 * 16, 128),
-            nn.ReLU(),
             nn.Linear(128, 1)
         )
 
@@ -77,16 +78,10 @@ transform = transforms.Compose([
 ])
 
 image_dir = '/Users/nick/Downloads/jhu_crowd_v2.0/train/images'
-annotation_file = '/Users/nick/Artificial Neural Networks and Deep Learning/https:/trainimage_labels.txt'
-
-from torch.utils.data import Subset  # 👈 add this at the top with your imports
-import random
+annotation_file = "/Users/nick/Artificial Neural Networks and Deep Learning/https:/trainimage_labels.txt"
 
 dataset = CountRegressionDataset(image_dir, annotation_file, transform=transform)
-indices = list(range(len(dataset)))
-random.shuffle(indices)
-subset = Subset(dataset, indices[:200])
-dataloader = DataLoader(subset, batch_size=8, shuffle=True)
+dataloader = DataLoader(dataset, batch_size=8, shuffle=True)
 
 val_image_dir = "/Users/nick/Downloads/jhu_crowd_v2.0/val/images"
 val_annotation_file = "/Users/nick/Artificial Neural Networks and Deep Learning/https:/valimage_labels.txt"
@@ -97,7 +92,7 @@ val_loader = DataLoader(val_dataset, batch_size=8, shuffle=False)
 
 model = CountCNN().to(device)
 optimizer = optim.Adam(model.parameters(), lr=1e-3)
-criterion = nn.MSELoss()
+criterion = nn.L1Loss()
 
 # Load previous weights if available
 if os.path.exists("count_model.pth"):
@@ -112,7 +107,6 @@ image = Image.open(test_image_path).convert("RGB")
 image = transform(image).unsqueeze(0).to(device)
 
 with torch.no_grad():
-    predicted_count = model(image)*2000
-    print(f"🧠 Predicted crowd count: {predicted_count.item():.2f}")
-
-
+    raw_pred = model(image).item()
+    rounded_pred = round(raw_pred)
+    print(f"🧠 Raw: {raw_pred:.2f}, Rounded: {rounded_pred}")
